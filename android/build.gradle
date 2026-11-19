@@ -6,9 +6,25 @@ allprojects {
 }
 
 rootProject.buildDir = "../build"
+
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
 }
+
+subprojects {
+    afterEvaluate { project ->
+        if (project.hasProperty('android')) {
+            def ext = project.extensions.findByName('android')
+            if (ext != null && ext.hasProperty('namespace') && ext.namespace == null) {
+                def ns = (project.group != null && project.group.toString().length() > 0)
+                        ? project.group.toString()
+                        : "fix.${project.name.replace('-', '_')}"
+                ext.namespace = ns
+            }
+        }
+    }
+}
+
 subprojects {
     project.evaluationDependsOn(":app")
 }
