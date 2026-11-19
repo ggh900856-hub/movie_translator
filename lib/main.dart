@@ -2,16 +2,17 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_mlkit_translation/google_mlkit_translation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 import 'package:vosk_flutter/vosk_flutter.dart';
 
 void main() => runApp(const MyApp());
+
+const _audioChannel = MethodChannel('audio_extractor');
 
 class SrcLang {
   final String name;
@@ -109,18 +110,16 @@ class _MoviePageState extends State<MoviePage> {
     });
 
     try {
-      // 1) استخراج الصوت: WAV مونو 16kHz
+      // 1) استخراج الصوت: WAV مونو 16kHz (بأدوات أندرويد)
       final tmp = await getTemporaryDirectory();
       final wavPath = '${tmp.path}/audio.wav';
       final old = File(wavPath);
       if (await old.exists()) await old.delete();
 
-      final session = await FFmpegKit.execute(
-          '-y -i "$videoPath" -vn -ac 1 -ar 16000 -c:a pcm_s16le "$wavPath"');
-      final rc = await session.getReturnCode();
-      if (!ReturnCode.isSuccess(rc)) {
-        throw 'فشل استخراج الصوت من الفيديو';
-      }
+      await _audioChannel.invokeMethod('extract', {
+        'input': videoPath,
+        'output': wavPath,
+      });
 
       // 2) تحميل موديل Vosk (مرة واحدة)
       setState(() => _status = 'بنجهّز موديل التعرف على الكلام (مرة واحدة)...');
