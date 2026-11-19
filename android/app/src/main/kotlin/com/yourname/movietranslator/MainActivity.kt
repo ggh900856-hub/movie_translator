@@ -1,5 +1,6 @@
 package com.yourname.movietranslator
 
+import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
@@ -26,8 +27,9 @@ class MainActivity : FlutterActivity() {
                         try {
                             extract(input, output)
                             runOnUiThread { result.success(true) }
-                        } catch (e: Exception) {
-                            runOnUiThread { result.error("EXTRACT", e.message, null) }
+                        } catch (e: Throwable) {
+                            val msg = "${e.javaClass.simpleName}: ${e.message}"
+                            runOnUiThread { result.error("EXTRACT", msg, null) }
                         }
                     }
                 } else {
@@ -43,11 +45,14 @@ class MainActivity : FlutterActivity() {
 
         var idx = -1
         var fmt: MediaFormat? = null
+        var mimeFound = ""
         for (i in 0 until ex.trackCount) {
             val f = ex.getTrackFormat(i)
-            if ((f.getString(MediaFormat.KEY_MIME) ?: "").startsWith("audio/")) {
+            val m = f.getString(MediaFormat.KEY_MIME) ?: ""
+            if (m.startsWith("audio/")) {
                 idx = i
                 fmt = f
+                mimeFound = m
                 break
             }
         }
@@ -57,10 +62,21 @@ class MainActivity : FlutterActivity() {
         }
         ex.selectTrack(idx)
 
-        val mime = fmt.getString(MediaFormat.KEY_MIME)!!
-        val codec = MediaCodec.createDecoderByType(mime)
-        codec.configure(fmt, null, null, 0)
-        codec.start()
+        val codec: MediaCodec
+        try {
+            try {
+                fmt.setInteger(
+                    MediaFormat.KEY_PCM_ENCODING,
+                    AudioFormat.ENCODING_PCM_16BIT
+                )
+            } catch (_: Throwable) {}
+            codec = MediaCodec.createDecoderByType(mimeFound)
+            codec.configure(fmt, null, null, 0)
+            codec.start()
+        } catch (e: Throwable) {
+            ex.release()
+            throw Exception("الموبايل مش بيفك صيغة الصوت ($mimeFound): ${e.message}")
+        }
 
         var srcRate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
         var channels = fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
@@ -143,7 +159,7 @@ class MainActivity : FlutterActivity() {
         } finally {
             out.flush()
             out.close()
-            try { codec.stop() } catch (_: Exception) {}
+            try { codec.stop() } catch (_: Throwable) {}
             codec.release()
             ex.release()
         }
