@@ -45,6 +45,166 @@ class Sub {
   Sub(this.start, this.end, this.original, this.arabic);
 }
 
+// ===================== تحويل الفصحى لعامية مصرية =====================
+// المفاتيح مكتوبة من غير تشكيل، وبهمزة واحدة (ا) بدل أ/إ/آ
+
+const Map<String, String> _egyPhrases = {
+  'لا اعرف': 'معرفش',
+  'لا استطيع': 'مقدرش',
+  'لا اريد': 'مش عايز',
+  'لا يمكن': 'مش ممكن',
+  'لا يوجد': 'مفيش',
+  'من اجل': 'عشان',
+  'كيف حالك': 'عامل إيه',
+};
+
+const Map<String, String> _egyWords = {
+  'ماذا': 'إيه',
+  'لماذا': 'ليه',
+  'كيف': 'إزاي',
+  'اين': 'فين',
+  'متى': 'إمتى',
+  'الان': 'دلوقتي',
+  'هذا': 'ده',
+  'هذه': 'دي',
+  'هؤلاء': 'دول',
+  'ذلك': 'ده',
+  'تلك': 'دي',
+  'جدا': 'أوي',
+  'كثيرا': 'كتير',
+  'قليلا': 'شوية',
+  'ايضا': 'كمان',
+  'حسنا': 'تمام',
+  'نعم': 'أيوه',
+  'ليس': 'مش',
+  'ليست': 'مش',
+  'الذي': 'اللي',
+  'التي': 'اللي',
+  'الذين': 'اللي',
+  'يجب': 'لازم',
+  'هناك': 'فيه',
+  'اريد': 'عايز',
+  'يريد': 'عايز',
+  'تريد': 'عايز',
+  'نريد': 'عايزين',
+  'يريدون': 'عايزين',
+  'رجل': 'راجل',
+  'امراة': 'ست',
+  'طفل': 'عيل',
+  'اطفال': 'عيال',
+  'منزل': 'بيت',
+  'المنزل': 'البيت',
+  'سيارة': 'عربية',
+  'ذهب': 'راح',
+  'يذهب': 'يروح',
+  'اذهب': 'روح',
+  'نذهب': 'نروح',
+  'ذهبنا': 'روحنا',
+  'معي': 'معايا',
+  'معك': 'معاك',
+  'معه': 'معاه',
+  'معها': 'معاها',
+  'معهم': 'معاهم',
+  'معنا': 'معانا',
+  'لدي': 'عندي',
+  'لديك': 'عندك',
+  'لديه': 'عنده',
+  'لديها': 'عندها',
+  'لدينا': 'عندنا',
+  'لديهم': 'عندهم',
+  'جيد': 'كويس',
+  'جيدة': 'كويسة',
+  'سيء': 'وحش',
+  'الجميع': 'كله',
+  'هيا': 'يلا',
+  'لكن': 'بس',
+  'ولكن': 'بس',
+  'فقط': 'بس',
+  'لان': 'عشان',
+  'لكي': 'عشان',
+  'حتى': 'لحد',
+  'مرحبا': 'أهلا',
+  'ربما': 'ممكن',
+  'رايت': 'شفت',
+  'راى': 'شاف',
+  'ارى': 'أشوف',
+  'نرى': 'نشوف',
+  'يرى': 'يشوف',
+  'انظر': 'بص',
+  'انظروا': 'بصوا',
+  'غدا': 'بكرة',
+  'امس': 'إمبارح',
+  'البارحة': 'إمبارح',
+  'شيء': 'حاجة',
+  'اشياء': 'حاجات',
+  'شيئا': 'حاجة',
+  'احتاج': 'محتاج',
+  'تحتاج': 'محتاج',
+  'يحتاج': 'محتاج',
+};
+
+class _Tok {
+  final String pre;
+  final String core;
+  final String post;
+  _Tok(this.pre, this.core, this.post);
+}
+
+final RegExp _tokRe =
+    RegExp(r'^([^\u0621-\u065F]*)([\u0621-\u065F]+)([^\u0621-\u065F]*)$');
+
+_Tok? _parseTok(String t) {
+  final m = _tokRe.firstMatch(t);
+  if (m == null) return null;
+  return _Tok(m.group(1)!, m.group(2)!, m.group(3)!);
+}
+
+String _norm(String s) => s
+    .replaceAll(RegExp(r'[\u064B-\u065F\u0640]'), '')
+    .replaceAll(RegExp(r'[أإآ]'), 'ا');
+
+String _toEgyptian(String text) {
+  final tokens = text.split(' ');
+  final out = <String>[];
+  var i = 0;
+  while (i < tokens.length) {
+    final a = _parseTok(tokens[i]);
+
+    // عبارات من كلمتين
+    if (a != null && a.post.isEmpty && i + 1 < tokens.length) {
+      final b = _parseTok(tokens[i + 1]);
+      if (b != null) {
+        final rep = _egyPhrases['${_norm(a.core)} ${_norm(b.core)}'];
+        if (rep != null) {
+          out.add('${a.pre}$rep${b.post}');
+          i += 2;
+          continue;
+        }
+      }
+    }
+
+    if (a != null) {
+      final key = _norm(a.core);
+      var rep = _egyWords[key];
+      if (rep != null) {
+        out.add('${a.pre}$rep${a.post}');
+      } else if (key.length > 2 && key.startsWith('و') &&
+          _egyWords[key.substring(1)] != null) {
+        // كلمة بواو العطف: "وماذا" ← "وإيه"
+        out.add('${a.pre}و${_egyWords[key.substring(1)]}${a.post}');
+      } else {
+        out.add(tokens[i]);
+      }
+    } else {
+      out.add(tokens[i]);
+    }
+    i++;
+  }
+  return out.join(' ');
+}
+
+// ======================================================================
+
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -78,12 +238,27 @@ class _MoviePageState extends State<MoviePage> {
   String _current = '';
   String _status = 'اختار فيلم أو فيديو وابدأ';
   double _progress = 0;
-  bool _busy = false;
+
+  bool _egy = false; // عامية مصرية
+  bool _busy = false; // مرحلة التجهيز قبل ما الفيديو يشتغل
+  bool _processing = false; // الترجمة شغالة في الخلفية
+  bool _waiting = false; // الفيديو واقف مستني الترجمة
+  double _processedUpTo = 0; // الترجمة وصلت لثانية كام
+  double _totalSec = 0;
+  int _runId = 0;
 
   @override
   void dispose() {
+    _runId++; // يوقف أي معالجة شغالة
+    _vc?.removeListener(_onTick);
     _vc?.dispose();
     super.dispose();
+  }
+
+  String _fmt(double s) {
+    final m = s ~/ 60;
+    final sec = (s % 60).floor();
+    return '$m:${sec.toString().padLeft(2, '0')}';
   }
 
   Future<void> _ensureMlModel(TranslateLanguage l) async {
@@ -92,25 +267,46 @@ class _MoviePageState extends State<MoviePage> {
     }
   }
 
+  String _display(String arabic) => _egy ? _toEgyptian(arabic) : arabic;
+
+  Future<void> _seekBy(int seconds) async {
+    final vc = _vc;
+    if (vc == null || !vc.value.isInitialized) return;
+    var target = vc.value.position + Duration(seconds: seconds);
+    if (target < Duration.zero) target = Duration.zero;
+    final dur = vc.value.duration;
+    if (target > dur) target = dur;
+    await vc.seekTo(target);
+  }
+
   Future<void> _pickAndProcess() async {
     final picked = await FilePicker.platform.pickFiles(type: FileType.video);
     if (picked == null || picked.files.single.path == null) return;
     final videoPath = picked.files.single.path!;
+
+    final myRun = ++_runId;
 
     _vc?.removeListener(_onTick);
     await _vc?.dispose();
     _vc = null;
     _subs.clear();
     _current = '';
+    _waiting = false;
+    _processedUpTo = 0;
+    _totalSec = 0;
 
     setState(() {
       _busy = true;
+      _processing = false;
       _progress = 0;
       _status = 'بنطلّع الصوت من الفيديو...';
     });
 
+    RandomAccessFile? raf;
+    OnDeviceTranslator? translator;
+
     try {
-      // 1) استخراج الصوت: WAV مونو 16kHz (بأدوات أندرويد)
+      // 1) استخراج الصوت: WAV مونو 16kHz
       final tmp = await getTemporaryDirectory();
       final wavPath = '${tmp.path}/audio.wav';
       final old = File(wavPath);
@@ -120,6 +316,7 @@ class _MoviePageState extends State<MoviePage> {
         'input': videoPath,
         'output': wavPath,
       });
+      if (!mounted || myRun != _runId) return;
 
       // 2) تحميل موديل Vosk (مرة واحدة)
       setState(() => _status = 'بنجهّز موديل التعرف على الكلام (مرة واحدة)...');
@@ -135,23 +332,43 @@ class _MoviePageState extends State<MoviePage> {
       final model = await vosk.createModel(modelPath);
       final rec = await vosk.createRecognizer(model: model, sampleRate: 16000);
       await rec.setWords(words: true);
+      if (!mounted || myRun != _runId) return;
 
       // 3) موديلات الترجمة
       setState(() => _status = 'بنجهّز موديل الترجمة...');
       await _ensureMlModel(_src.ml);
       await _ensureMlModel(TranslateLanguage.arabic);
-      final translator = OnDeviceTranslator(
+      translator = OnDeviceTranslator(
         sourceLanguage: _src.ml,
         targetLanguage: TranslateLanguage.arabic,
       );
+      if (!mounted || myRun != _runId) return;
 
-      // 4) تفريغ الصوت + ترجمة
-      setState(() => _status = 'بنسمع الفيلم ونترجم... ممكن ياخد وقت');
-      final raf = await File(wavPath).open();
-      final total = await raf.length();
+      // 4) نشغّل الفيديو فورًا، والترجمة تكمل في الخلفية
+      final total = await File(wavPath).length();
+      _totalSec = (total - 44) / 32000.0;
+
+      final vc = VideoPlayerController.file(File(videoPath));
+      await vc.initialize();
+      if (!mounted || myRun != _runId) {
+        await vc.dispose();
+        return;
+      }
+      vc.addListener(_onTick);
+      _vc = vc;
+      setState(() {
+        _busy = false;
+        _processing = true;
+        _status = 'بنترجم وانت بتتفرج...';
+      });
+      await vc.play();
+
+      // 5) تفريغ الصوت + ترجمة
+      raf = await File(wavPath).open();
       await raf.setPosition(44); // نتخطى هيدر WAV
       int readBytes = 44;
-      const chunk = 32000; // ثانية صوت
+      int lastPercent = -1;
+      const chunk = 128000; // 4 ثواني صوت
 
       Future<void> handle(String jsonStr) async {
         final j = jsonDecode(jsonStr) as Map<String, dynamic>;
@@ -160,48 +377,65 @@ class _MoviePageState extends State<MoviePage> {
         if (text.isEmpty || words is! List || words.isEmpty) return;
         final start = (words.first['start'] as num).toDouble();
         final end = (words.last['end'] as num).toDouble();
-        final ar = await translator.translateText(text);
+        final ar = await translator!.translateText(text);
         _subs.add(Sub(start, end, text, ar));
       }
 
       while (true) {
+        if (!mounted || myRun != _runId) return;
         final bytes = await raf.read(chunk);
         if (bytes.isEmpty) break;
         readBytes += bytes.length;
+
         final done = await rec.acceptWaveformBytes(Uint8List.fromList(bytes));
         if (done) {
           await handle(await rec.getResult());
         }
-        if (mounted) {
+
+        _processedUpTo = (readBytes - 44) / 32000.0;
+        final percent = _totalSec > 0
+            ? ((_processedUpTo / _totalSec) * 100).floor()
+            : 0;
+        if (percent != lastPercent && mounted && myRun == _runId) {
+          lastPercent = percent;
           setState(() {
-            _progress = readBytes / total;
+            _progress = _totalSec > 0 ? _processedUpTo / _totalSec : 0;
             _status =
-                'بنسمع ونترجم... ${(_progress * 100).toStringAsFixed(0)}%';
+                'الترجمة وصلت لـ ${_fmt(_processedUpTo)} من ${_fmt(_totalSec)} ($percent%)';
           });
         }
       }
       await handle(await rec.getFinalResult());
-      await raf.close();
-      await translator.close();
+      _processedUpTo = _totalSec + 1000; // خلصنا، مفيش انتظار تاني
 
-      // 5) تشغيل الفيديو
-      final vc = VideoPlayerController.file(File(videoPath));
-      await vc.initialize();
-      vc.addListener(_onTick);
-      _vc = vc;
-      await vc.play();
-
-      if (!mounted) return;
-      setState(() {
-        _busy = false;
-        _status = 'تمت الترجمة: ${_subs.length} جملة';
-      });
-    } catch (e) {
-      if (mounted) {
+      if (mounted && myRun == _runId) {
         setState(() {
-          _busy = false;
+          _progress = 1;
+          _status = 'تمت الترجمة: ${_subs.length} جملة';
+        });
+      }
+    } catch (e) {
+      if (mounted && myRun == _runId) {
+        setState(() {
           _status = 'حصل خطأ: $e';
         });
+      }
+    } finally {
+      try {
+        await raf?.close();
+      } catch (_) {}
+      try {
+        await translator?.close();
+      } catch (_) {}
+      if (mounted && myRun == _runId) {
+        setState(() {
+          _busy = false;
+          _processing = false;
+        });
+        if (_waiting) {
+          _waiting = false;
+          _vc?.play();
+        }
       }
     }
   }
@@ -210,10 +444,24 @@ class _MoviePageState extends State<MoviePage> {
     final vc = _vc;
     if (vc == null) return;
     final pos = vc.value.position.inMilliseconds / 1000.0;
+
+    // لو المشاهدة سبقت الترجمة: نقف ونستنى
+    if (_processing) {
+      if (!_waiting && vc.value.isPlaying && pos > _processedUpTo - 4) {
+        _waiting = true;
+        vc.pause();
+        if (mounted) setState(() {});
+      } else if (_waiting && pos < _processedUpTo - 12) {
+        _waiting = false;
+        vc.play();
+        if (mounted) setState(() {});
+      }
+    }
+
     String text = '';
     for (final s in _subs) {
       if (pos >= s.start - 0.2 && pos <= s.end + 0.6) {
-        text = s.arabic;
+        text = _display(s.arabic);
         break;
       }
     }
@@ -222,9 +470,65 @@ class _MoviePageState extends State<MoviePage> {
     }
   }
 
+  Widget _controls(VideoPlayerController vc) {
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: ValueListenableBuilder<VideoPlayerValue>(
+        valueListenable: vc,
+        builder: (context, v, _) {
+          return Column(
+            children: [
+              Text(
+                '${_fmt(v.position.inMilliseconds / 1000.0)} / ${_fmt(v.duration.inMilliseconds / 1000.0)}',
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    iconSize: 34,
+                    tooltip: 'رجوع 30 ثانية',
+                    icon: const Icon(Icons.replay_30),
+                    onPressed: () => _seekBy(-30),
+                  ),
+                  IconButton(
+                    iconSize: 34,
+                    tooltip: 'رجوع 10 ثواني',
+                    icon: const Icon(Icons.replay_10),
+                    onPressed: () => _seekBy(-10),
+                  ),
+                  IconButton(
+                    iconSize: 48,
+                    icon: Icon(
+                        v.isPlaying ? Icons.pause_circle : Icons.play_circle),
+                    onPressed: () {
+                      v.isPlaying ? vc.pause() : vc.play();
+                    },
+                  ),
+                  IconButton(
+                    iconSize: 34,
+                    tooltip: 'تقديم 10 ثواني',
+                    icon: const Icon(Icons.forward_10),
+                    onPressed: () => _seekBy(10),
+                  ),
+                  IconButton(
+                    iconSize: 34,
+                    tooltip: 'تقديم 30 ثانية',
+                    icon: const Icon(Icons.forward_30),
+                    onPressed: () => _seekBy(30),
+                  ),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final vc = _vc;
+    final locked = _busy || _processing;
     return Scaffold(
       appBar: AppBar(title: const Text('مترجم الأفلام')),
       body: Padding(
@@ -241,22 +545,43 @@ class _MoviePageState extends State<MoviePage> {
                       .map((l) =>
                           DropdownMenuItem(value: l, child: Text(l.name)))
                       .toList(),
-                  onChanged: _busy ? null : (v) => setState(() => _src = v!),
+                  onChanged: locked ? null : (v) => setState(() => _src = v!),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: const Text('عامية مصرية'),
+              subtitle: const Text('تحويل تقريبي للكلمات الشائعة'),
+              value: _egy,
+              onChanged: (v) {
+                setState(() => _egy = v);
+                _current = '';
+                _onTick();
+              },
+            ),
             FilledButton.icon(
-              onPressed: _busy ? null : _pickAndProcess,
+              onPressed: locked ? null : _pickAndProcess,
               icon: const Icon(Icons.video_library),
               label: const Text('اختار فيديو'),
             ),
             const SizedBox(height: 8),
             if (_busy)
-              LinearProgressIndicator(
-                  value: _progress == 0 ? null : _progress),
+              const LinearProgressIndicator()
+            else if (_processing)
+              LinearProgressIndicator(value: _progress == 0 ? null : _progress),
             const SizedBox(height: 8),
             Text(_status, textAlign: TextAlign.center),
+            if (_waiting)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text(
+                  'الفيديو واقف شوية لحد ما الترجمة تسبقه...',
+                  style: TextStyle(color: Colors.orange),
+                  textAlign: TextAlign.center,
+                ),
+              ),
             const SizedBox(height: 12),
             if (vc != null && vc.value.isInitialized)
               Expanded(
@@ -288,17 +613,7 @@ class _MoviePageState extends State<MoviePage> {
                       ),
                     ),
                     VideoProgressIndicator(vc, allowScrubbing: true),
-                    IconButton(
-                      iconSize: 40,
-                      icon: Icon(vc.value.isPlaying
-                          ? Icons.pause_circle
-                          : Icons.play_circle),
-                      onPressed: () {
-                        setState(() {
-                          vc.value.isPlaying ? vc.pause() : vc.play();
-                        });
-                      },
-                    ),
+                    _controls(vc),
                   ],
                 ),
               ),
