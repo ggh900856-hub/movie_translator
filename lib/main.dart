@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -185,10 +186,11 @@ String _toEgyptian(String text) {
 
     if (a != null) {
       final key = _norm(a.core);
-      var rep = _egyWords[key];
+      final rep = _egyWords[key];
       if (rep != null) {
         out.add('${a.pre}$rep${a.post}');
-      } else if (key.length > 2 && key.startsWith('و') &&
+      } else if (key.length > 2 &&
+          key.startsWith('و') &&
           _egyWords[key.substring(1)] != null) {
         // كلمة بواو العطف: "وماذا" ← "وإيه"
         out.add('${a.pre}و${_egyWords[key.substring(1)]}${a.post}');
@@ -250,6 +252,7 @@ class _MoviePageState extends State<MoviePage> {
   @override
   void dispose() {
     _runId++; // يوقف أي معالجة شغالة
+    _audioChannel.setMethodCallHandler(null);
     _vc?.removeListener(_onTick);
     _vc?.dispose();
     super.dispose();
@@ -261,10 +264,16 @@ class _MoviePageState extends State<MoviePage> {
     return '$m:${sec.toString().padLeft(2, '0')}';
   }
 
-  Future<void> _ensureMlModel(TranslateLanguage l) async {
-    if (!await _mm.isModelDownloaded(l.bcpCode)) {
-      await _mm.downloadModel(l.bcpCode, isWifiRequired: false);
-    }
+  // يعرض اسم المرحلة + النسبة الإجمالية للتجهيز (0 → 1)
+  void _setStage(String label, double overall, int myRun) {
+    if (!mounted || myRun != _runId) return;
+    final v = overall.clamp(0.0, 1.0);
+    final text = '$label ${(v * 100).floor()}%';
+    if (text == _status) return;
+    setState(() {
+      _progress = v;
+      _status = text;
+    });
   }
 
   String _display(String arabic) => _egy ? _toEgyptian(arabic) : arabic;
@@ -277,6 +286,105 @@ class _MoviePageState extends State<MoviePage> {
     final dur = vc.value.duration;
     if (target > dur) target = dur;
     await vc.seekTo(target);
+  }
+
+  // تحميل ملف مع نسبة حقيقية
+  Future<void> _downloadFile(
+      String url, String dest, void Function(double) onProgress) async {
+    final client = HttpClient();
+    try {
+      final req = await client.getUrl(Uri.parse(url));
+      final resp = await req.close();
+      if (resp.statusCode != 200) {
+        throw 'فشل تحميل الموديل (${resp.statusCode})';
+      }
+      final total = resp.contentLength;
+      final sink = File(dest).openWrite();
+      int got = 0;
+      int lastPct = -1;
+      await for (final chunk in resp) {
+        sink.add(chunk);
+        got += chunk.length;
+        if (total > 0) {
+          final pi = (got * 100 / total).floor();
+          if (pi != lastPct) {
+            lastPct = pi;
+            onProgress(got / total);
+          }
+        }
+      }
+      await sink.flush();
+      await sink.close();
+    } finally {
+      client.close();
+    }
+  }
+
+  // فك ضغط مع نسبة حقيقية
+  Future<void> _unzip(
+      String zipPath, String destRoot, void Function(double) onProgress) async {
+    final bytes = await File(zipPath).readAsBytes();
+    final archive = ZipDecoder().decodeBytes(bytes);
+    final files = archive.files.where((f) => f.isFile).toList();
+    if (files.isEmpty) throw 'ملف الموديل فاضي';
+
+    final first = files.first.name;
+    final slash = first.indexOf('/');
+    final prefix = slash > 0 ? first.substring(0, slash + 1) : '';
+
+    int i = 0;
+    int lastPct = -1;
+    for (final f in files) {
+      var rel = f.name;
+      if (prefix.isNotEmpty && rel.startsWith(prefix)) {
+        rel = rel.substring(prefix.length);
+      }
+      i++;
+      if (rel.isEmpty || rel.contains('..')) continue;
+      final out = File('$destRoot/$rel');
+      await out.parent.create(recursive: true);
+      await out.writeAsBytes(f.content as List<int>);
+      final pi = (i * 100 / files.length).floor();
+      if (pi != lastPct) {
+        lastPct = pi;
+        onProgress(i / files.length);
+        await Future.delayed(Duration.zero); // نسيب الشاشة تتحدث
+      }
+    }
+  }
+
+  // يرجّع مسار موديل Vosk (بيحمّله ويفكه لو مش موجود)
+  Future<String> _prepareVoskModel(int myRun) async {
+    final support = await getApplicationSupportDirectory();
+    final modelName = _src.modelUrl.split('/').last.replaceAll('.zip', '');
+    final root = '${support.path}/vosk/$modelName';
+    final marker = File('$root/.ok');
+
+    if (await marker.exists()) {
+      _setStage('موديل الكلام موجود', 0.80, myRun);
+      return root;
+    }
+
+    // لو فيه محاولة ناقصة قبل كده نمسحها
+    final dir = Directory(root);
+    if (await dir.exists()) await dir.delete(recursive: true);
+    await dir.create(recursive: true);
+
+    final zipPath = '${support.path}/vosk/$modelName.zip';
+    await _downloadFile(_src.modelUrl, zipPath, (p) {
+      _setStage('بنحمّل موديل التعرف على الكلام', 0.45 + 0.25 * p, myRun);
+    });
+    if (!mounted || myRun != _runId) return root;
+
+    await _unzip(zipPath, root, (p) {
+      _setStage('بنفك ضغط الموديل', 0.70 + 0.10 * p, myRun);
+    });
+
+    try {
+      await File(zipPath).delete();
+    } catch (_) {}
+    await marker.writeAsString('ok');
+    return root;
   }
 
   Future<void> _pickAndProcess() async {
@@ -299,7 +407,17 @@ class _MoviePageState extends State<MoviePage> {
       _busy = true;
       _processing = false;
       _progress = 0;
-      _status = 'بنطلّع الصوت من الفيديو...';
+      _status = 'بنطلّع الصوت من الفيديو 0%';
+    });
+
+    // استقبال نسبة استخراج الصوت من أندرويد (0 → 45% من التجهيز)
+    _audioChannel.setMethodCallHandler((call) async {
+      if (call.method == 'progress') {
+        final p = (call.arguments as num).toInt();
+        if (_busy) {
+          _setStage('بنطلّع الصوت من الفيديو', 0.45 * p / 100.0, myRun);
+        }
+      }
     });
 
     RandomAccessFile? raf;
@@ -318,33 +436,39 @@ class _MoviePageState extends State<MoviePage> {
       });
       if (!mounted || myRun != _runId) return;
 
-      // 2) تحميل موديل Vosk (مرة واحدة)
-      setState(() => _status = 'بنجهّز موديل التعرف على الكلام (مرة واحدة)...');
-      final vosk = VoskFlutterPlugin.instance();
-      final loader = ModelLoader();
-      final modelName = _src.modelUrl.split('/').last.replaceAll('.zip', '');
-      final String modelPath;
-      if (await loader.isModelAlreadyLoaded(modelName)) {
-        modelPath = await loader.modelPath(modelName);
-      } else {
-        modelPath = await loader.loadFromNetwork(_src.modelUrl);
-      }
-      final model = await vosk.createModel(modelPath);
-      final rec = await vosk.createRecognizer(model: model, sampleRate: 16000);
-      await rec.setWords(words: true);
+      // 2) موديل Vosk: تحميل + فك ضغط (45 → 80%)
+      final modelPath = await _prepareVoskModel(myRun);
       if (!mounted || myRun != _runId) return;
 
-      // 3) موديلات الترجمة
-      setState(() => _status = 'بنجهّز موديل الترجمة...');
-      await _ensureMlModel(_src.ml);
-      await _ensureMlModel(TranslateLanguage.arabic);
+      // 3) موديلات الترجمة (80 → 90%)
+      final needed = [_src.ml, TranslateLanguage.arabic];
+      for (var i = 0; i < needed.length; i++) {
+        final l = needed[i];
+        _setStage('بنحمّل موديل الترجمة ${i + 1} من ${needed.length}',
+            0.80 + 0.10 * (i / needed.length), myRun);
+        if (!await _mm.isModelDownloaded(l.bcpCode)) {
+          await _mm.downloadModel(l.bcpCode, isWifiRequired: false);
+        }
+        _setStage('بنحمّل موديل الترجمة ${i + 1} من ${needed.length}',
+            0.80 + 0.10 * ((i + 1) / needed.length), myRun);
+        if (!mounted || myRun != _runId) return;
+      }
       translator = OnDeviceTranslator(
         sourceLanguage: _src.ml,
         targetLanguage: TranslateLanguage.arabic,
       );
+
+      // 4) تحميل موديل الكلام في الذاكرة (90 → 100%)
+      _setStage('بنحمّل الموديل في الذاكرة', 0.90, myRun);
+      final vosk = VoskFlutterPlugin.instance();
+      final model = await vosk.createModel(modelPath);
+      _setStage('بنحمّل الموديل في الذاكرة', 0.97, myRun);
+      final rec = await vosk.createRecognizer(model: model, sampleRate: 16000);
+      await rec.setWords(words: true);
+      _setStage('التجهيز خلص', 1.0, myRun);
       if (!mounted || myRun != _runId) return;
 
-      // 4) نشغّل الفيديو فورًا، والترجمة تكمل في الخلفية
+      // 5) نشغّل الفيديو فورًا، والترجمة تكمل في الخلفية
       final total = await File(wavPath).length();
       _totalSec = (total - 44) / 32000.0;
 
@@ -359,11 +483,12 @@ class _MoviePageState extends State<MoviePage> {
       setState(() {
         _busy = false;
         _processing = true;
-        _status = 'بنترجم وانت بتتفرج...';
+        _progress = 0;
+        _status = 'الترجمة 0%';
       });
       await vc.play();
 
-      // 5) تفريغ الصوت + ترجمة
+      // 6) تفريغ الصوت + ترجمة
       raf = await File(wavPath).open();
       await raf.setPosition(44); // نتخطى هيدر WAV
       int readBytes = 44;
@@ -411,7 +536,7 @@ class _MoviePageState extends State<MoviePage> {
       if (mounted && myRun == _runId) {
         setState(() {
           _progress = 1;
-          _status = 'تمت الترجمة: ${_subs.length} جملة';
+          _status = 'تمت الترجمة 100%: ${_subs.length} جملة';
         });
       }
     } catch (e) {
@@ -567,10 +692,7 @@ class _MoviePageState extends State<MoviePage> {
               label: const Text('اختار فيديو'),
             ),
             const SizedBox(height: 8),
-            if (_busy)
-              const LinearProgressIndicator()
-            else if (_processing)
-              LinearProgressIndicator(value: _progress == 0 ? null : _progress),
+            if (_busy || _processing) LinearProgressIndicator(value: _progress),
             const SizedBox(height: 8),
             Text(_status, textAlign: TextAlign.center),
             if (_waiting)
